@@ -1,30 +1,24 @@
-import { useRef, useCallback } from 'react';
+import { useCallback } from 'react';
+import {
+  getToken,
+  setToken,
+  clearToken as clearStoredToken,
+} from '../services/tokenStore';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
 /**
- * useAuth – manages the access token purely in memory (useRef).
+ * useAuth – manages the access token purely in memory via tokenStore.
  *
- * The token is intentionally stored in a ref (not state) so that it
- * never triggers unnecessary re-renders and is never persisted to
- * localStorage / sessionStorage.
- *
- * The refresh token is stored server-side in an HTTP-only cookie and
- * is sent automatically by the browser on every request to /auth/refresh.
+ * The token lives in a module-level variable (tokenStore) so that:
+ *  - It is never persisted to localStorage / sessionStorage.
+ *  - apiFetch (a plain module) can read the same token without React.
+ *  - Multiple component mounts always share the same token reference.
  */
 const useAuth = () => {
-  /** @type {React.MutableRefObject<string|null>} */
-  const accessTokenRef = useRef(null);
-
-  /**
-   * Reads the current in-memory token.
-   * @returns {string|null}
-   */
-  const getToken = useCallback(() => accessTokenRef.current, []);
-
   /**
    * POST /auth/login
-   * Stores the returned accessToken in memory.
+   * Stores the returned accessToken in the shared tokenStore.
    *
    * @param {string} username
    * @param {string} password
@@ -42,7 +36,6 @@ const useAuth = () => {
     });
 
     if (!response.ok) {
-      // Attempt to read an error message from the response body.
       let message = 'Invalid credentials. Please try again.';
       try {
         const data = await response.json();
@@ -54,13 +47,13 @@ const useAuth = () => {
     }
 
     const { accessToken } = await response.json();
-    accessTokenRef.current = accessToken;
+    setToken(accessToken); // store in shared module-level store
   }, []);
 
   /**
    * POST /auth/refresh
-   * Exchanges the HTTP-only refresh-token cookie for a new accessToken
-   * and stores it in memory.
+   * Exchanges the HTTP-only refresh-token cookie for a new accessToken.
+   * Called automatically by apiFetch on 401; exposed here for manual use.
    *
    * @returns {Promise<void>}
    * @throws {Error} when the session has expired and re-login is required
@@ -68,23 +61,23 @@ const useAuth = () => {
   const refreshToken = useCallback(async () => {
     const response = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
-      credentials: 'include', // sends the HTTP-only cookie automatically
+      credentials: 'include',
     });
 
     if (!response.ok) {
-      accessTokenRef.current = null;
+      clearStoredToken();
       throw new Error('Session expired. Please log in again.');
     }
 
     const { accessToken } = await response.json();
-    accessTokenRef.current = accessToken;
+    setToken(accessToken);
   }, []);
 
   /**
    * Clears the in-memory token (e.g. on logout).
    */
   const clearToken = useCallback(() => {
-    accessTokenRef.current = null;
+    clearStoredToken();
   }, []);
 
   return { login, refreshToken, getToken, clearToken };
